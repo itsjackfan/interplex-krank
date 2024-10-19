@@ -8,7 +8,6 @@ from functools import lru_cache
 from config import Config
 from passlib.context import CryptContext
 
-
 logger = logging.getLogger(__name__)
 
 class LightweightTextPreprocessor:
@@ -47,20 +46,8 @@ def fix_common_json_errors(json_str: str) -> str:
     json_str = re.sub(r',\s*]', ']', json_str)
     return json_str
 
-def parse_tree_of_thoughts(output: str) -> Dict[str, Any]:
-    try:
-        cleaned_output = clean_llm_output(output)
-        corrected_output = fix_common_json_errors(cleaned_output)
-        tree_of_thoughts = json.loads(corrected_output)
-        return tree_of_thoughts
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        logger.debug(f"Failed JSON string: {corrected_output}")
-        raise ValueError(f"Unable to parse JSON: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error during JSON parsing: {e}")
-        raise ValueError(f"Unexpected error: {e}")
-    
+# Removed parse_tree_of_thoughts function as RAG functionality is no longer needed
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:

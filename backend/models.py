@@ -3,17 +3,6 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, EmailStr
-from typing_extensions import TypedDict
-
-class NoteInput(BaseModel):
-    content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-# models.py
-
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from datetime import datetime
 
 # Model for user registration (input)
 class UserCreate(BaseModel):
@@ -23,16 +12,14 @@ class UserCreate(BaseModel):
 
 # Model for user data stored in the database (internal use)
 class UserInDB(BaseModel):
-    id: Optional[str] = Field(None, alias='_id')  # MongoDB's _id field as string
     username: str
-    email: EmailStr
+    email: str
     hashed_password: str
-    is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-    class Config:
-        populate_by_name = True
-        from_attributes = True
+    is_active: bool
+    created_at: datetime
+    profile_info: Optional[str] = None  # Profile information
+    topics_of_interest: List[str] = []  # Topics extracted from articles
+    pagerank: float = 0.0  # PageRank score
 
 # Model for user data returned in responses (output)
 class UserRead(BaseModel):
@@ -41,32 +28,43 @@ class UserRead(BaseModel):
     email: EmailStr
     is_active: bool
     created_at: datetime
+    profile_info: Optional[str] = None
+    topics_of_interest: List[str] = []
+    pagerank: float = 0.0
 
     class Config:
         populate_by_name = True
         from_attributes = True
 
-# Model for note input
-class NoteInput(BaseModel):
-    content: str
-    timestamp: datetime
-
-class NoteUpdateInput(BaseModel):
+# Model for article input
+class ArticleInput(BaseModel):
+    title: str
     content: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-# Model for note output
-class NoteOutput(BaseModel):
-    id: str = Field(..., alias='_id')  # Map MongoDB's '_id' to 'id'
+# Model for article data stored in the database (internal use)
+class ArticleInDB(BaseModel):
+    id: str
+    title: str
+    content: str
+    processed_content: str
+    embedding: List[float]
+    timestamp: datetime
+    summary: str
+    author_username: str  # Reference to the user
+    pagerank: float = 0.0  # PageRank score
+
+# Model for article output
+class ArticleOutput(BaseModel):
+    id: str = Field(..., alias='_id')
+    title: str
     content: str
     processed_content: str
     timestamp: datetime
-    commonness: int = 0
+    summary: str
     pagerank: float = 0.0
-    summary: str = ""  # AI-generated insights
-    similar_notes: List[str] = Field(default_factory=list)
-    cluster_id: Optional[str] = None
-    owner_username: str  # Owner's username
+    similar_articles: List[str] = Field(default_factory=list)
+    author_username: str  # Author's username
 
     class Config:
         populate_by_name = True
@@ -77,32 +75,18 @@ class QueryInput(BaseModel):
     query: str
     limit: int
 
-# Model for RAG query input
-class RAGQueryInput(BaseModel):
-    query: str
+# Model for query result item
+class QueryResultItem(BaseModel):
+    type: str  # 'article' or 'author'
+    id: Optional[str] = None  # Article ID
+    username: Optional[str] = None  # Username for authors
+    title: Optional[str] = None  # Article title
+    content: Optional[str] = None  # Article content
+    profile_info: Optional[str] = None  # Author's profile info
+    topics_of_interest: Optional[List[str]] = None  # Author's topics
+    pagerank: float = 0.0
+    similarity: Optional[float] = None  # Similarity score for articles
 
-class SubPromptResponse(TypedDict):
-    prompt: str
-    response: str
-    note_id: str  # Link back to the note
-
-class ParameterUpdate(BaseModel):
-    SIMILARITY_THRESHOLD_RECALCULATE_ALL: float
-    SIMILARITY_THRESHOLD_UPDATE_RELATIONSHIPS: float
-    SIMILARITY_THRESHOLD_RAG: float
-    SIMILARITY_THRESHOLD_CLUSTER: float
-    DBSCAN_EPS: float
-    DBSCAN_MIN_SAMPLES: int
-    RAG_MAX_CLUSTERS: int
-    RAG_MAX_NOTES_PER_CLUSTER: int
-    PAGERANK_ALPHA: float
-
-# Optionally, define a model for Cluster if needed
-class ClusterOutput(BaseModel):
-    id: str = Field(..., alias='_id')
-    label: str
-    title: str
-    summary: str
-    size: int
-    pagerank_weight: float = 0.0
-    note_ids: List[str]
+# Model for query response
+class QueryResponse(BaseModel):
+    results: List[QueryResultItem]

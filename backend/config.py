@@ -12,15 +12,15 @@ class Config:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # e.g., DEBUG, INFO, WARNING, ERROR
 
     # -------------------- FastAPI Configuration --------------------
-    APP_TITLE = os.getenv("APP_TITLE", "Note-Taking API with LLM Features")
+    APP_TITLE = os.getenv("APP_TITLE", "Article Management API with LLM Features")
     APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT = int(os.getenv("APP_PORT", 8000))
 
-    # -------------------- Neo4j Configuration --------------------
-    MONGODB_USERNAME=os.getenv("MONGODB_USERNAME", "mongodb")   
-    MONGODB_PASS=os.getenv("MONGODB_PASS", "password")
-    MONGODB_URI=os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-    MONGODB_DB_NAME=os.getenv("MONGODB_DB_NAME", "notes")
+    # -------------------- MongoDB Configuration --------------------
+    MONGODB_USERNAME = os.getenv("MONGODB_USERNAME", "mongodb")   
+    MONGODB_PASS = os.getenv("MONGODB_PASS", "password")
+    MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "articles")  # Updated from 'notes' to 'articles'
 
     # -------------------- LLM Configuration --------------------
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
@@ -29,20 +29,13 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     # -------------------- Similarity Thresholds --------------------
-    SIMILARITY_THRESHOLD_NOTE = float(os.getenv("SIMILARITY_THRESHOLD_NOTE", 0.1))
+    SIMILARITY_THRESHOLD_ARTICLE = float(os.getenv("SIMILARITY_THRESHOLD_ARTICLE", 0.1))  # Renamed from 'SIMILARITY_THRESHOLD_NOTE'
     SIMILARITY_THRESHOLD_CLUSTER = float(os.getenv("SIMILARITY_THRESHOLD_CLUSTER", 0.2))
     SIMILARITY_THRESHOLD_UPDATE_RELATIONSHIPS = float(os.getenv("SIMILARITY_THRESHOLD_UPDATE_RELATIONSHIPS", 0.3875))
 
     # -------------------- DBSCAN Parameters --------------------
     DBSCAN_EPS = float(os.getenv("DBSCAN_EPS", 1.1725))
     DBSCAN_MIN_SAMPLES = int(os.getenv("DBSCAN_MIN_SAMPLES", 2))
-
-    # -------------------- RAG Configuration --------------------
-    RAG_MAX_CONTEXT_LENGTH = int(os.getenv("RAG_MAX_CONTEXT_LENGTH", 10000))
-    RAG_DEFAULT_MAX_TOKENS = int(os.getenv("RAG_DEFAULT_MAX_TOKENS", 2048))
-    RAG_MAX_CLUSTERS = int(os.getenv("RAG_MAX_CLUSTERS", 3))
-    RAG_MAX_NOTES_PER_CLUSTER = int(os.getenv("RAG_MAX_NOTES_PER_CLUSTER", 5))
-    CLUSTER_DAMPING_FACTOR = float(os.getenv("CLUSTER_DAMPING_FACTOR", 0.85))
 
     # -------------------- PageRank Configuration --------------------
     PAGERANK_ALPHA = float(os.getenv("PAGERANK_ALPHA", 0.85))
@@ -81,9 +74,11 @@ The AI will provide:
 A refined version of the search query exploring the branches of thought.
         """)
 
+    ARTICLE_SUMMARY_PROMPT_TEMPLATE = os.getenv("ARTICLE_SUMMARY_PROMPT_TEMPLATE",
+        "Summarize the following content clearly and concisely, so that the most important points can be gleaned at a glance of this summary:\n{content}")
+
     CLUSTER_TITLE_PROMPT_TEMPLATE = os.getenv("CLUSTER_TITLE_PROMPT_TEMPLATE",
         "Generate a concise and descriptive title for the following content:\n{content}")
+
     CLUSTER_SUMMARY_PROMPT_TEMPLATE = os.getenv("CLUSTER_SUMMARY_PROMPT_TEMPLATE",
         "Summarize the following content in a few sentences clearly and concisely, so that the most important points can be gleaned at a glance of this summary:\n{content}")
-    NOTE_SUMMARY_PROMPT_TEMPLATE = os.getenv("NOTE_SUMMARY_PROMPT_TEMPLATE",
-        "Summarize the following content clearly and concisely, so that the most important points can be gleaned at a glance of this summary:\n{content}")

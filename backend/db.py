@@ -18,9 +18,9 @@ class MongoDBConnection:
         try:
             self.client = MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=5000)
             self.db = self.client[Config.MONGODB_DB_NAME]
-            self.notes = self.db.notes
-            self.users = self.db.users  # Users collection
-            self.clusters = self.db.clusters
+            self.articles = self.db.articles
+            self.users = self.db.users  # Authors collection
+            self.graph = self.db.graph  # Collection for graph edges
             # Ensure indexes for performance
             self._ensure_indexes()
             logger.info("Connected to MongoDB successfully.")
@@ -36,12 +36,12 @@ class MongoDBConnection:
             # Unique index on username and email to prevent duplicates
             self.users.create_index("username", unique=True)
             self.users.create_index("email", unique=True)
-            # Index on 'similar_notes' for PageRank computations
-            self.notes.create_index("similar_notes")
-            # Index on 'cluster_id' for clustering
-            self.notes.create_index("cluster_id")
-            # Index on 'owner_username' to quickly retrieve user-specific notes
-            self.notes.create_index("owner_username")
+            # Index on 'similar_articles' for PageRank computations
+            self.articles.create_index("similar_articles")
+            # Index on 'author_username' to quickly retrieve author's articles
+            self.articles.create_index("author_username")
+            # Index on 'type' for graph edges
+            self.graph.create_index("type")
             logger.info("MongoDB indexes ensured.")
         except Exception as e:
             logger.error(f"Error creating indexes: {e}")
@@ -58,22 +58,28 @@ class MongoDBConnection:
             logger.error(f"MongoDB connectivity verification failed: {e}")
             return False
 
-    # User Management Methods
+    # User (Author) Management Methods
 
     def create_user(self, user_data: Dict[str, Any]):
         """
         Insert a new user into the 'users' collection.
         """
         try:
+            user_data['pagerank'] = 0.0  # Initialize pagerank
             self.users.insert_one(user_data)
             logger.debug(f"User {user_data['username']} created.")
+            # Create a node in the graph
+            self.graph.insert_one({
+                'from': user_data['username'],
+                'to': user_data['username'],
+                'type': 'author_node'
+            })
         except pymongo.errors.DuplicateKeyError as e:
             logger.error(f"Duplicate user detected: {e}")
             raise
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             raise
-
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """
@@ -88,43 +94,74 @@ class MongoDBConnection:
             logger.error(f"Error retrieving user {username}: {e}")
             raise
 
-    # Note Management Methods (as previously defined)
-    
-    def create_note(self, note_id: str, content: str, processed_content: str,
-                   embedding: List[float], timestamp: datetime, summary: str,
-                   owner_username: str):
+    def get_users_by_usernames(self, usernames: List[str]) -> List[Dict[str, Any]]:
         """
-        Insert a new note into the 'notes' collection.
+        Retrieve multiple users by their usernames.
         """
         try:
-            note_document = {
-                "_id": note_id,  # Custom string ID
+            users = list(self.users.find({"username": {"$in": usernames}}))
+            return users
+        except Exception as e:
+            logger.error(f"Error retrieving users {usernames}: {e}")
+            raise
+
+    def update_user_profile(self, username: str, profile_info: str):
+        """
+        Update a user's profile information.
+        """
+        try:
+            self.users.update_one(
+                {"username": username},
+                {"$set": {"profile_info": profile_info}}
+            )
+            logger.debug(f"Updated profile for user {username}.")
+        except Exception as e:
+            logger.error(f"Error updating profile for user {username}: {e}")
+            raise
+
+    # Article Management Methods
+
+    def create_article(self, article_id: str, title: str, content: str, processed_content: str,
+                       embedding: List[float], timestamp: datetime, summary: str,
+                       author_username: str):
+        """
+        Insert a new article into the 'articles' collection.
+        """
+        try:
+            article_document = {
+                "_id": article_id,  # Custom string ID
+                "title": title,
                 "content": content,
                 "processed_content": processed_content,
                 "embedding": embedding,
                 "timestamp": timestamp,  # Stored as datetime
                 "summary": summary,
-                "commonness": 0,
                 "pagerank": 0.0,
-                "similar_notes": [],
-                "cluster_id": None,
-                "owner_username": owner_username
+                "similar_articles": [],
+                "author_username": author_username
             }
-            self.notes.insert_one(note_document)
-            logger.debug(f"Note {note_id} inserted into MongoDB.")
+            self.articles.insert_one(article_document)
+            logger.debug(f"Article {article_id} inserted into MongoDB.")
+            # Add edge between author and article in the graph
+            self.graph.insert_one({
+                'from': author_username,
+                'to': article_id,
+                'type': 'authored'
+            })
         except pymongo.errors.DuplicateKeyError:
-            logger.error(f"Duplicate note ID detected: {note_id}")
+            logger.error(f"Duplicate article ID detected: {article_id}")
             raise
         except Exception as e:
-            logger.error(f"Error inserting note {note_id}: {e}")
+            logger.error(f"Error inserting article {article_id}: {e}")
             raise
-    
-    def update_note(self, note_id: str, content: str, processed_content: str,
-                embedding: List[float], timestamp: datetime, summary: str):
+
+    def update_article(self, article_id: str, title: str, content: str, processed_content: str,
+                       embedding: List[float], timestamp: datetime, summary: str):
         try:
-            result = self.db.notes.update_one(
-                {"_id": note_id},
+            result = self.articles.update_one(
+                {"_id": article_id},
                 {"$set": {
+                    "title": title,
                     "content": content,
                     "processed_content": processed_content,
                     "embedding": embedding,
@@ -133,205 +170,212 @@ class MongoDBConnection:
                 }}
             )
             if result.matched_count == 0:
-                raise Exception("Note not found.")
+                raise Exception("Article not found.")
         except Exception as e:
-            logger.error(f"Error updating note {note_id}: {e}")
+            logger.error(f"Error updating article {article_id}: {e}")
             raise
 
+    def get_article(self, article_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a single article by its ID.
+        """
+        try:
+            article = self.articles.find_one({"_id": article_id})
+            return article
+        except Exception as e:
+            logger.error(f"Error retrieving article {article_id}: {e}")
+            raise
 
-    def get_note(self, note_id: str) -> Optional[Dict[str, Any]]:
+    def get_articles(self, article_ids: List[str]) -> List[Dict[str, Any]]:
         """
-        Retrieve a single note by its ID.
+        Retrieve multiple articles by their IDs.
         """
         try:
-            note = self.notes.find_one({"_id": note_id})
-            return note
+            articles_cursor = self.articles.find({"_id": {"$in": article_ids}})
+            articles = list(articles_cursor)
+            return articles
         except Exception as e:
-            logger.error(f"Error retrieving note {note_id}: {e}")
+            logger.error(f"Error retrieving articles {article_ids}: {e}")
             raise
-    
-    def get_notes(self, note_ids: List[str]) -> List[Dict[str, Any]]:
+
+    def get_all_articles_by_author(self, username: str) -> List[Dict[str, Any]]:
         """
-        Retrieve multiple notes by their IDs.
+        Retrieve all articles authored by a specific user.
         """
         try:
-            notes_cursor = self.notes.find({"_id": {"$in": note_ids}})
-            notes = list(notes_cursor)
-            return notes
+            articles_cursor = self.articles.find({"author_username": username})
+            articles = list(articles_cursor)
+            return articles
         except Exception as e:
-            logger.error(f"Error retrieving notes {note_ids}: {e}")
+            logger.error(f"Error retrieving articles for user {username}: {e}")
             raise
-    
-    def get_cluster(self, cluster_id: str) -> Optional[Dict[str, Any]]:
+
+    def get_all_articles(self) -> List[Dict[str, Any]]:
         """
-        Retrieve a single cluster by its ID.
+        Retrieve all articles in the database.
         """
         try:
-            cluster = self.clusters.find_one({"_id": cluster_id})
-            return cluster
+            articles_cursor = self.articles.find()
+            articles = list(articles_cursor)
+            return articles
         except Exception as e:
-            logger.error(f"Error retrieving cluster {cluster_id}: {e}")
+            logger.error(f"Error retrieving all articles: {e}")
             raise
-    
-    def get_clusters(self, cluster_ids: List[str]) -> List[Dict[str, Any]]:
+
+    def update_relationships(self, article_id: str, similarity_threshold: float):
         """
-        Retrieve multiple clusters by their IDs.
+        Update the 'similar_articles' field for a given article based on embedding similarity.
         """
         try:
-            clusters_cursor = self.clusters.find({"_id": {"$in": cluster_ids}})
-            clusters = list(clusters_cursor)
-            return clusters
-        except Exception as e:
-            logger.error(f"Error retrieving clusters {cluster_ids}: {e}")
-            raise
-    
-    def get_cluster_content(self, note_ids: List[str]) -> str:
-        """
-        Concatenate the content of all notes in a cluster.
-        """
-        try:
-            notes_cursor = self.notes.find({"_id": {"$in": note_ids}}, {"content": 1})
-            contents = [note["content"] for note in notes_cursor]
-            combined_content = "\n".join(contents)
-            return combined_content
-        except Exception as e:
-            logger.error(f"Error getting cluster content for notes {note_ids}: {e}")
-            raise
-    
-    def update_relationships(self, note_id: str, similarity_threshold: float):
-        """
-        Update the 'similar_notes' field for a given note based on embedding similarity.
-        Also updates the 'similar_notes' field of similar notes to include the current note.
-        """
-        try:
-            # Fetch the embedding of the current note
-            current_note = self.get_note(note_id)
-            if not current_note:
-                logger.error(f"Note {note_id} not found for updating relationships.")
+            # Fetch the embedding of the current article
+            current_article = self.get_article(article_id)
+            if not current_article:
+                logger.error(f"Article {article_id} not found for updating relationships.")
                 return
 
-            current_embedding = np.array(current_note["embedding"]).reshape(1, -1)
+            current_embedding = np.array(current_article["embedding"]).reshape(1, -1)
 
-            # Fetch embeddings of all other notes
-            other_notes_cursor = self.notes.find(
-                {"_id": {"$ne": note_id}, "embedding": {"$exists": True, "$ne": []}},
+            # Fetch embeddings of all other articles
+            other_articles_cursor = self.articles.find(
+                {"_id": {"$ne": article_id}, "embedding": {"$exists": True, "$ne": []}},
                 {"_id": 1, "embedding": 1}
             )
 
-            similar_note_ids = []
-            for note in other_notes_cursor:
-                other_note_id = note["_id"]
-                other_embedding = np.array(note["embedding"]).reshape(1, -1)
+            similar_article_ids = []
+            for article in other_articles_cursor:
+                other_article_id = article["_id"]
+                other_embedding = np.array(article["embedding"]).reshape(1, -1)
                 similarity = cosine_similarity(current_embedding, other_embedding)[0][0]
                 if similarity >= similarity_threshold:
-                    similar_note_ids.append(other_note_id)
-                    # Update the 'similar_notes' field of the similar note to include the current note
-                    self.notes.update_one(
-                        {"_id": other_note_id},
-                        {"$addToSet": {"similar_notes": note_id}}
+                    similar_article_ids.append(other_article_id)
+                    # Update the 'similar_articles' field of the similar article to include the current article
+                    self.articles.update_one(
+                        {"_id": other_article_id},
+                        {"$addToSet": {"similar_articles": article_id}}
                     )
 
-            # Update the 'similar_notes' field of the current note
-            self.notes.update_one(
-                {"_id": note_id},
-                {"$set": {"similar_notes": similar_note_ids}}
+            # Update the 'similar_articles' field of the current article
+            self.articles.update_one(
+                {"_id": article_id},
+                {"$set": {"similar_articles": similar_article_ids}}
             )
-            logger.debug(f"Updated similar_notes for note {note_id} with {len(similar_note_ids)} similar notes.")
+            logger.debug(f"Updated similar_articles for article {article_id} with {len(similar_article_ids)} similar articles.")
 
         except Exception as e:
-            logger.error(f"Error updating relationships for note {note_id}: {e}")
+            logger.error(f"Error updating relationships for article {article_id}: {e}")
             raise
 
-    
-    def get_similar_notes(
+    def get_similar_articles(
         self,
         query_embedding: List[float],
         similarity_threshold: float,
         limit: int,
-        use_pagerank_weighting: bool = False,
-        owner_username: str = ""
+        use_pagerank_weighting: bool = False
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve notes similar to the query_embedding based on cosine similarity.
+        Retrieve articles similar to the query_embedding based on cosine similarity.
         Optionally weight the similarity by PageRank scores.
-        Filters notes by owner_username.
         """
         try:
             # Convert query_embedding to numpy array
             query_emb = np.array(query_embedding).reshape(1, -1)
 
-            # Fetch notes belonging to the user with embeddings
-            notes_cursor = self.notes.find(
-                {
-                    "embedding": {"$exists": True, "$ne": []},
-                    "owner_username": owner_username
-                }
-            )
-            similar_notes = []
-            for note in notes_cursor:
-                note_id = note["_id"]
-                embedding = np.array(note["embedding"]).reshape(1, -1)
+            # Fetch articles with embeddings
+            articles_cursor = self.articles.find({"embedding": {"$exists": True, "$ne": []}})
+            similar_articles = []
+            for article in articles_cursor:
+                article_id = article["_id"]
+                embedding = np.array(article["embedding"]).reshape(1, -1)
                 similarity = cosine_similarity(query_emb, embedding)[0][0]
                 if similarity >= similarity_threshold:
-                    pagerank = note.get("pagerank", 0.0)
+                    pagerank = article.get("pagerank", 0.0)
                     if use_pagerank_weighting:
                         weighted_similarity = similarity * pagerank
                     else:
                         weighted_similarity = similarity
-                    # Include all note fields in the result
-                    note_data = note.copy()
-                    note_data["id"] = note_data.pop("_id")
-                    note_data["similarity"] = similarity
-                    note_data["weighted_similarity"] = weighted_similarity
-                    similar_notes.append(note_data)
+                    # Include all article fields in the result
+                    article_data = article.copy()
+                    article_data["id"] = article_data.pop("_id")
+                    article_data["similarity"] = similarity
+                    article_data["weighted_similarity"] = weighted_similarity
+                    similar_articles.append(article_data)
 
-            # Sort notes based on similarity or weighted_similarity
+            # Sort articles based on similarity or weighted_similarity
             if use_pagerank_weighting:
-                similar_notes.sort(key=lambda x: x["weighted_similarity"], reverse=True)
+                similar_articles.sort(key=lambda x: x["weighted_similarity"], reverse=True)
             else:
-                similar_notes.sort(key=lambda x: x["similarity"], reverse=True)
+                similar_articles.sort(key=lambda x: x["similarity"], reverse=True)
 
             # Limit the number of results
-            limited_notes = similar_notes[:limit]
-            return limited_notes
+            limited_articles = similar_articles[:limit]
+            return limited_articles
 
         except Exception as e:
-            logger.error(f"Error retrieving similar notes: {e}")
+            logger.error(f"Error retrieving similar articles: {e}")
             raise
 
-    def get_note_owned_by_user(self, note_id: str, owner_username: str) -> Optional[Dict[str, Any]]:
+    def get_article_by_author(self, article_id: str, author_username: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve a single note by its ID and owner.
+        Retrieve a single article by its ID and author.
         """
         try:
-            note = self.notes.find_one({"_id": note_id, "owner_username": owner_username})
-            return note
+            article = self.articles.find_one({"_id": article_id, "author_username": author_username})
+            return article
         except Exception as e:
-            logger.error(f"Error retrieving note {note_id}: {e}")
+            logger.error(f"Error retrieving article {article_id}: {e}")
             raise
 
-    
-    def get_all_embeddings(self) -> List[np.ndarray]:
+    def get_all_user_nodes(self) -> List[Dict[str, Any]]:
         """
-        Retrieve all embeddings from the notes collection.
-        Useful for bulk operations like clustering.
+        Retrieve all users to be included as nodes in the graph.
         """
         try:
-            embeddings_cursor = self.notes.find(
-                {"embedding": {"$exists": True, "$ne": []}},
-                {"embedding": 1}
+            users = list(self.users.find())
+            return users
+        except Exception as e:
+            logger.error(f"Error retrieving all user nodes: {e}")
+            raise
+
+    def get_graph_edges(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve all edges from the graph collection.
+        """
+        try:
+            edges = list(self.graph.find())
+            return edges
+        except Exception as e:
+            logger.error(f"Error retrieving graph edges: {e}")
+            raise
+
+    def extract_topics_from_articles(self, articles: List[Dict[str, Any]]) -> List[str]:
+        """
+        Extract topics from articles using a placeholder function.
+        """
+        # Placeholder implementation
+        topics = []
+        for article in articles:
+            # For demonstration, we'll just split the content into words and pick unique words
+            content = article.get('content', '')
+            words = content.split()
+            topics.extend(words)
+        # Return unique topics
+        return list(set(topics))
+
+    def update_user_topics(self, username: str):
+        """
+        Update the user's topics of interest based on their articles.
+        """
+        try:
+            articles = self.get_all_articles_by_author(username)
+            topics = self.extract_topics_from_articles(articles)
+            self.users.update_one(
+                {'username': username},
+                {'$set': {'topics_of_interest': topics}}
             )
-            embeddings = [np.array(note["embedding"]) for note in embeddings_cursor]
-            return embeddings
+            logger.debug(f"Updated topics of interest for user {username}.")
         except Exception as e:
-            logger.error(f"Error retrieving all embeddings: {e}")
+            logger.error(f"Error updating topics for user {username}: {e}")
             raise
-    
-    def get_notes_by_ids(self, note_ids: List[str]) -> List[Dict[str, Any]]:
-        """
-        Retrieve notes by a list of note_ids.
-        """
-        return self.get_notes(note_ids)
-    
+
     def close(self):
         self.client.close()
